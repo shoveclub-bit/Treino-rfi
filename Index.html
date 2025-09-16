@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mesa de Poker - Treino RFI (Melhorado)</title>
+<style>
+body {
+background: #0d0d12;
+color: #fff;
+font-family: Arial, sans-serif;
+display: flex;
+flex-direction: column;
+align-items: center;
+margin: 0;
+padding-top: 150px;
+}
+.controls {
+position: fixed;
+top: 0;
+left: 0;
+width: 100%;
+display: flex;
+justify-content: center;
+gap: 20px;
+background: #111;
+padding: 15px 0;
+box-shadow: 0 2px 10px rgba(0,0,0,0.7);
+z-index: 1000;
+flex-wrap: wrap;
+}
+.table {
+position: relative;
+background: #222;
+box-shadow: 0 0 25px rgba(0,0,0,0.7) inset, 0 0 10px rgba(0,0,0,0.5);
+margin-bottom: 20px;
+}
+@media (min-width: 768px) {
+.table { width: 650px; height: 330px; border-radius: 40% / 50%; }
+}
+@media (max-width: 767px) {
+.table { width: 360px; height: 500px; border-radius: 45% / 55%; }
+}
+.seat {
+position: absolute;
+width: 60px;
+height: 60px;
+background: #333;
+border-radius: 50%;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+font-size: 13px;
+border: 2px solid #555;
+text-align: center;
+}
+.seat .stack { margin-top: 4px; font-size: 12px; color: #ffd; }
+.seat .cards { margin-top: 2px; font-size: 16px; font-weight: bold; display: flex; gap:2px; }
+.red { color: red; }
+.black { color: #fff; }
+.dealer { background: #ffd700; color: #000; font-weight: bold; }
+.actions { display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; justify-content: center;}
+.actions button {
+padding: 10px 25px;
+font-size: 16px;
+font-weight: bold;
+border: none;
+border-radius: 8px;
+cursor: pointer;
+transition: background-color 0.2s, box-shadow 0.2s;
+border: 2px solid transparent;
+}
+.actions button:disabled {
+background-color: #444;
+cursor: not-allowed;
+}
+.fold { background-color: #d32f2f; color: #fff; }
+.fold:hover:not(:disabled) { background-color: #b71c1c; }
+.raise { background-color: #388e3c; color: #fff; }
+.raise:hover:not(:disabled) { background-color: #1b5e20; }
+.shove { background-color: #1976d2; color: #fff; }
+.shove:hover:not(:disabled) { background-color: #0d47a1; }
+.correct-answer {
+box-shadow: 0 0 15px lime;
+border-color: lime;
+}
+#nextHand { background-color: #555; color: #fff; }
+#nextHand:hover { background-color: #333; }
+#feedback { margin-bottom: 15px; font-size: 18px; font-weight: bold; min-height: 24px; text-align:center; }
+.scoreboard { margin-bottom: 10px; font-size: 18px; text-align:center; }
+.history { max-width: 700px; margin-bottom: 20px; font-size:14px; overflow-y:auto; max-height:120px; border: 1px solid #333; padding: 5px; border-radius: 5px;}
+.history div { margin-bottom:2px; }
+</style>
+</head>
+<body>
+<div class="controls">
+<div>
+<label for="players">Quantidade de jogadores:</label>
+<select id="players">
+<option value="6">6</option>
+<option value="7">7</option>
+<option value="8">8</option>
+<option value="9" selected>9</option>
+</select>
+</div>
+<div>
+<label for="stack">Stack inicial (BB):</label>
+<select id="stack">
+<option value="14" selected>14BB</option>
+<option value="20">20BB</option>
+<option value="30">30BB</option>
+<option value="40">40BB</option>
+</select>
+</div>
+<div>
+<label for="position">Sua posição:</label>
+<select id="position"></select> </div>
+</div>
+<div class="table" id="table"></div>
+<div id="feedback"></div>
+<div class="actions">
+<button class="fold" data-action="fold">Fold</button>
+<button class="raise" data-action="raise">Raise</button>
+<button class="shove" data-action="shove">Shove</button>
+<button id="nextHand">Próxima mão</button>
+</div>
+<div class="scoreboard">
+Acertos: <span id="wins">0</span> | Erros: <span id="losses">0</span>
+</div>
+<div class="history" id="history"></div>
+<script>
+// ======================
+// Variáveis e Seletores
+// ======================
+const table = document.getElementById('table');
+const selectPlayers = document.getElementById('players');
+const selectStack = document.getElementById('stack');
+const selectPosition = document.getElementById('position');
+const winsEl = document.getElementById('wins');
+const lossesEl = document.getElementById('losses');
+const feedbackEl = document.getElementById("feedback");
+const historyEl = document.getElementById("history");
+const actionButtons = document.querySelectorAll('.actions button[data-action]');
+
+let wins = 0;
+let losses = 0;
+let currentHand = {};
+
+// ======================
+
+// ======================
+const RANGES = {
+"UTG": {
+"14": {
+"raise": ["JJ", "TT", "99", "88", "AQs", "AJs", "ATs", "KQs", "KJs", "QJs", "JTs"],
+"shove": ["AA", "KK", "QQ", "AKs", "AKo"],
+// O fold é qualquer coisa que não seja raise ou shove
+},
+"20": { "raise": [], "shove": [], "fold": [] },
+},
+"UTG+1": {
+"14": { "raise": [], "shove": [], "fold": [] },
+},
+"LJ": {
+"14": { "raise": [], "shove": [], "fold": [] },
+},
+"HJ": {
+"14": { "raise": [], "shove": [], "fold": [] },
+},
+"CO": {
+"14": {
+"raise": ["A9s", "A8s", "A7s", "A6s", "A5s", "A4s", "A3s", "A2s", "K9s", "K8s", "K7s", "Q9s", "J9s", "T9s", "98s", "87s", "76s", "65s", "AQo", "AJo", "ATo", "KQo", "KJo"],
+"shove": ["AA", "KK", "QQ", "JJ", "TT", "99", "88", "77", "66", "55", "44", "33", "22", "AKs", "AQs", "AJs", "ATs", "KQs", "KJs", "KTs", "QJs", "QTs", "JTs", "AKo"],
+},
+},
+"BTN": {
+"14": {
+"raise": ["A9s", "A8s", "A7s", "A6s", "K7s", "K6s", "K5s", "K4s", "K3s", "K2s", "Q8s", "Q7s", "J8s", "T8s", "97s", "86s", "75s", "65s", "54s", "AQo", "AJo", "ATo", "A9o", "A8o", "A7o", "KQo", "KJo", "KTo", "QJo", "QTo", "JTo"],
+"shove": ["AA", "KK", "QQ", "JJ", "TT", "99", "88", "77", "66", "55", "44", "33", "22", "AKs", "AQs", "AJs", "ATs", "A5s", "A4s", "A3s", "A2s", "KQs", "KJs", "KTs", "K9s", "QJs", "QTs", "Q9s", "JTs", "J9s", "T9s", "98s", "87s", "76s", "AKo"],
+},
+},
+"SB": {
+"14": {
+"raise": ["A9s", "A8s", "K8s", "K7s", "K6s", "Q9s", "J9s", "T8s", "98s", "87s", "76s", "65s", "ATo", "A9o", "A8o", "KTo", "QTo", "JTo"],
+"shove": ["AA", "KK", "QQ", "JJ", "TT", "99", "88", "77", "66", "55", "44", "33", "22", "AKs", "AQs", "AJs", "ATs", "A7s", "A6s", "A5s", "A4s", "A3s", "A2s", "KQs", "KJs", "KTs", "K9s", "QJs", "QTs", "JTs", "T9s", "AKo", "AQo", "AJo", "KQo", "KJo"],
+},
+},
+"BB": {
+"14": { "raise": [], "shove": [], "fold": [] }, // 
+},
+};
+
+// ======================
+// Lógica do Treino
+// ======================
+
+function getAvailableHands(position, stack) {
+const currentRange = RANGES[position]?.[stack];
+if (!currentRange || (!currentRange.raise?.length && !currentRange.shove?.length)) {
+return null;
+}
+// Combina todas as mãos de 'raise' e 'shove' em um único array
+const raisePlays = (currentRange.raise || []).map(hand => ({ hand, action: 'raise' }));
+const shovePlays = (currentRange.shove || []).map(hand => ({ hand, action: 'shove' }));
+// Adicionamos um conjunto de mãos de FOLD para que elas apareçam no sorteio.
+// A quantidade pode ser ajustada para controlar a frequência de folds.
+const foldPlays = ["K2o", "Q2o", "J2o", "T6o", "95o", "84o", "73o", "32s", "85s"].map(hand => ({ hand, action: 'fold' }));
+return [...raisePlays, ...shovePlays, ...foldPlays];
+}
+
+function getRandomHand() {
+const position = selectPosition.value;
+const stack = selectStack.value;
+const allPlays = getAvailableHands(position, stack);
+
+if (!allPlays) {
+feedbackEl.textContent = "⚠️ Range não definido para esta Posição/Stack.";
+feedbackEl.style.color = "orange";
+return null;
+}
+
+const randomPlay = allPlays[Math.floor(Math.random() * allPlays.length)];
+const hand = randomPlay.hand;
+const action = randomPlay.action;
+
+let rank1 = hand[0];
+let rank2 = hand[1];
+const type = hand.length > 2 ? hand[2] : ''; // Pares não tem 's' ou 'o'
+const suits = ["♠", "♥", "♦", "♣"];
+let suit1, suit2;
+
+if (type === "s") { // Suited
+suit1 = suit2 = suits[Math.floor(Math.random() * suits.length)];
+} else if (type === "o") { // Offsuited
+suit1 = suits[Math.floor(Math.random() * suits.length)];
+do {
+suit2 = suits[Math.floor(Math.random() * suits.length)];
+} while (suit2 === suit1);
+} else { // Par
+suit1 = suits[Math.floor(Math.random() * suits.length)];
+do {
+suit2 = suits[Math.floor(Math.random() * suits.length)];
+} while (suit2 === suit1);
+}
+return { hand, rank1, rank2, suit1, suit2, action };
+}
+
+function checkAction(playerChoice) {
+if (!currentHand) return;
+
+setActionButtonsState(true); // Desabilita os botões
+
+const correctAction = currentHand.action;
+const isCorrect = playerChoice.toLowerCase() === correctAction;
+const entry = `${currentHand.hand} → ${playerChoice.toUpperCase()} (${isCorrect ? "✅" : "❌"}); Ação correta: ${correctAction.toUpperCase()}`;
+const div = document.createElement("div");
+div.textContent = entry;
+historyEl.prepend(div);
+
+if (isCorrect) {
+wins++;
+feedbackEl.textContent = `✅ Correto! ${currentHand.hand} → ${correctAction.toUpperCase()}`;
+feedbackEl.style.color = "lime";
+} else {
+losses++;
+feedbackEl.textContent = `❌ Errado! Ação correta para ${currentHand.hand} era → ${correctAction.toUpperCase()}`;
+feedbackEl.style.color = "red";
+}
+
+// Feedback visual no botão correto
+const correctButton = document.querySelector(`button[data-action="${correctAction}"]`);
+if(correctButton){
+correctButton.classList.add('correct-answer');
+}
+
+winsEl.textContent = wins;
+lossesEl.textContent = losses;
+
+setTimeout(() => {
+if(correctButton) correctButton.classList.remove('correct-answer');
+startNewHand();
+}, 2000);
+}
+
+function startNewHand() {
+feedbackEl.textContent = "";
+currentHand = getRandomHand();
+renderSeats();
+setActionButtonsState(false); // Habilita os botões
+}
+
+// ======================
+// Renderização
+// ======================
+function renderHandWithSuits(handObj) {
+const container = document.createElement("div");
+const card1 = document.createElement("span");
+card1.textContent = handObj.rank1;
+card1.appendChild(getSuitElement(handObj.suit1));
+const card2 = document.createElement("span");
+card2.textContent = handObj.rank2;
+card2.appendChild(getSuitElement(handObj.suit2));
+container.appendChild(card1);
+container.appendChild(card2);
+return container;
+}
+
+function getSuitElement(suit) {
+const span = document.createElement("span");
+span.textContent = suit;
+span.className = (suit === "♥" || suit === "♦") ? "red" : "black";
+return span;
+}
+
+function renderSeats() {
+table.innerHTML = '';
+if (!currentHand) return;
+
+const rect = table.getBoundingClientRect();
+const centerX = rect.width / 2;
+const centerY = rect.height / 2;
+const radiusX = rect.width / 2 - 50;
+const radiusY = rect.height / 2 - 50;
+
+const numSeats = parseInt(selectPlayers.value);
+const currentPositions = getPositionsForPlayerCount(numSeats);
+const playerPosition = selectPosition.value;
+
+const playerIndex = currentPositions.indexOf(playerPosition);
+if (playerIndex === -1) {
+// Isso pode acontecer brevemente ao trocar o número de jogadores
+return;
+}
+
+// Reordena para o jogador estar sempre na base
+const reorderedSeats = [...currentPositions.slice(playerIndex), ...currentPositions.slice(0, playerIndex)];
+
+const startAngle = -Math.PI / 2;
+for (let i = 0; i < reorderedSeats.length; i++) {
+const seat = document.createElement("div");
+seat.classList.add('seat');
+const angle = startAngle + (i / reorderedSeats.length) * (2 * Math.PI);
+const x = centerX + radiusX * Math.cos(angle) - 30;
+const y = centerY + radiusY * Math.sin(angle) - 30;
+seat.style.left = `${x}px`;
+seat.style.top = `${y}px`;
+
+const nameDiv = document.createElement("div");
+nameDiv.textContent = reorderedSeats[i];
+seat.appendChild(nameDiv);
+
+if (reorderedSeats[i] === playerPosition) {
+const cardsDiv = document.createElement("div");
+cardsDiv.classList.add("cards");
+cardsDiv.appendChild(renderHandWithSuits(currentHand));
+seat.appendChild(cardsDiv);
+}
+
+if (reorderedSeats[i] === "BTN") {
+seat.classList.add("dealer");
+}
+
+table.appendChild(seat);
+}
+}
+
+
+// ======================
+// Funções de Utilidade
+// ======================
+
+function setActionButtonsState(disabled) {
+actionButtons.forEach(button => button.disabled = disabled);
+}
+
+const POSITION_MAP = {
+9: ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+8: ["UTG", "UTG+1", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+7: ["UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
+6: ["LJ", "HJ", "CO", "BTN", "SB", "BB"] // Também conhecido como UTG em 6-max
+};
+
+function getPositionsForPlayerCount(count) {
+return POSITION_MAP[count] || [];
+}
+
+function updatePositionSelector() {
+const numPlayers = parseInt(selectPlayers.value);
+const positions = getPositionsForPlayerCount(numPlayers);
+const currentSelectedPos = selectPosition.value;
+
+selectPosition.innerHTML = ''; // Limpa opções existentes
+
+positions.forEach(pos => {
+const option = document.createElement('option');
+option.value = pos;
+option.textContent = pos;
+selectPosition.appendChild(option);
+});
+
+// Mantém a posição selecionada se ela ainda existir, senão seleciona a primeira
+if (positions.includes(currentSelectedPos)) {
+selectPosition.value = currentSelectedPos;
+} else {
+selectPosition.value = positions[0];
+}
+}
+
+// ======================
+// Eventos
+// ======================
+actionButtons.forEach(button => {
+button.addEventListener("click", () => checkAction(button.dataset.action));
+});
+
+document.getElementById("nextHand").addEventListener("click", startNewHand);
+
+selectStack.addEventListener('change', startNewHand);
+selectPosition.addEventListener('change', startNewHand);
+
+selectPlayers.addEventListener('change', () => {
+updatePositionSelector();
+startNewHand();
+});
+
+window.addEventListener('resize', renderSeats);
+
+// ======================
+// Inicialização
+// ======================
+updatePositionSelector();
+startNewHand();
+
+</script>
+</body>
+</html>
